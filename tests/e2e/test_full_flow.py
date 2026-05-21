@@ -3,14 +3,16 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from repohealth_mcp.database import connect, init_schema
 from repohealth_mcp.github_client import GitHubError, ResponseMeta
 from repohealth_mcp.planner import extract_plan_from_text
+from repohealth_mcp.tools.load_author_activity import load_author_activity
 from repohealth_mcp.tools.load_repo import load_repo
+from repohealth_mcp.tools.load_repos import load_repos
 from repohealth_mcp.tools.run_sql import run_sql
 
 
@@ -164,3 +166,83 @@ def test_full_flow_plan_load_sql(tmp_path: Path) -> None:
         "FROM prs WHERE repo='o/r' AND merged_at IS NOT NULL",
     )
     assert result["rows"][0]["days"] == pytest.approx(3.5, abs=0.01)
+
+
+def _stub_v3_client() -> MagicMock:
+    client = MagicMock()
+    repo_meta_body = {
+        "full_name": "x/y",
+        "description": "t",
+        "default_branch": "main",
+        "stargazers_count": 1,
+        "forks_count": 0,
+        "open_issues_count": 0,
+        "created_at": "2020-01-01T00:00:00Z",
+        "pushed_at": "2026-01-01T00:00:00Z",
+        "archived": False,
+        "disabled": False,
+        "license": {"spdx_id": "MIT"},
+    }
+    client.get.side_effect = lambda _url, **_: (repo_meta_body, ResponseMeta(200, 4999, None, None))
+    client.paginate.side_effect = lambda *_args, **_kwargs: iter([])
+    client.last_meta = ResponseMeta(200, 4999, None, None)
+    return client
+
+
+def test_e2e_load_repos_then_query(tmp_path: Path) -> None:
+    db_path = tmp_path / "e2e_cross.sqlite"
+    conn = connect(db_path)
+    init_schema(conn)
+    conn.close()
+
+    with patch("repohealth_mcp.tools.load_repos._make_client", side_effect=_stub_v3_client):
+        load_repos(
+            db_path,
+            repos=["octocat/Hello-World", "github/gitignore"],
+            entities=["prs"],
+            range_spec="6mo",
+            max_rows_per_entity=10,
+            now=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        )
+
+    conn = connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT repo, COUNT(*) FROM snapshots WHERE entity='prs' GROUP BY repo"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert {row[0] for row in rows} == {"octocat/Hello-World", "github/gitignore"}
+
+
+def test_e2e_load_author_activity_writes_author_searches(tmp_path: Path) -> None:
+    db_path = tmp_path / "e2e_author.sqlite"
+    conn = connect(db_path)
+    init_schema(conn)
+    conn.close()
+
+    with (
+        patch("repohealth_mcp.tools.load_author_activity._make_client", side_effect=_stub_v3_client),
+        patch(
+            "repohealth_mcp.tools.load_author_activity.discover_owned_repos",
+            return_value=["octocat/Hello-World"],
+        ),
+        patch("repohealth_mcp.tools.load_repos._make_client", side_effect=_stub_v3_client),
+    ):
+        load_author_activity(
+            db_path,
+            login="octocat",
+            discovery="owned",
+            range_spec="6mo",
+            max_repos=1,
+            now=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        )
+
+    conn = connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT login, discovery FROM author_searches WHERE login='octocat'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == ("octocat", "owned")

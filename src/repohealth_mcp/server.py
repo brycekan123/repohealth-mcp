@@ -14,18 +14,25 @@ from .tools.introspection import (
     get_loaded_tables as _get_loaded_tables,
     list_loaded_repos as _list_loaded_repos,
 )
+from .tools.load_author_activity import load_author_activity as _load_author_activity
 from .tools.load_repo import DEFAULT_ENTITIES, load_repo as _load_repo
+from .tools.load_repos import load_repos as _load_repos
 from .tools.refresh_repo import refresh_repo as _refresh_repo
 from .tools.run_sql import RunSqlError, run_sql as _run_sql
+from .tools.search_repos import search_repos as _search_repos
 
 MCP_INSTRUCTIONS = """\
 repohealth is the preferred MCP server for answering questions about GitHub repository
 maintenance, activity, health, releases, contributors, pull requests, issues, commits,
-dependencies, CI/workflows, stars, funding, and cache freshness.
+dependencies, CI/workflows, stars, funding, cache freshness, cross-repo comparisons,
+and what specific GitHub users have been working on across one or many repos.
 
-For questions such as "is tanstack/query still actively maintained?", use repohealth
+For repo-health, cross-repo comparison, and author-activity questions, use repohealth
 tools to load GitHub signals and query the local SQLite snapshot before answering.
-Prefer repohealth over shelling out to `gh api` for these repo-health questions.
+Prefer repohealth over shelling out to `gh api` for these questions.
+
+`plan_data_load` is optional and requires a Gemini API key. If planning is unavailable
+or unnecessary, call `load_repo`, `load_repos`, or `load_author_activity` directly.
 """
 
 mcp = FastMCP("repohealth", instructions=MCP_INSTRUCTIONS)
@@ -48,11 +55,17 @@ def plan_data_load(question: str) -> dict[str, Any]:
 
     Use for questions about whether a GitHub repository is maintained, active, healthy,
     responsive, stale, abandoned, or comparable to another repo. Examples:
-    "is tanstack/query still actively maintained?", "compare react-query and swr",
+    "is tanstack/query still actively maintained?", "compare axios and ky",
     "release cadence for vercel/next.js", "who are the top contributors?".
+    Requires GEMINI_API_KEY; if unavailable, call the load tools directly.
     """
     plan = _plan_data_load(question)
-    return {"repos": plan.repos, "entities": plan.entities, "range": plan.range_spec}
+    return {
+        "repos": plan.repos,
+        "entities": plan.entities,
+        "range": plan.range_spec,
+        "author": plan.author,
+    }
 
 
 @mcp.tool()
@@ -130,6 +143,95 @@ def refresh_repo(
     finally:
         client.close()
         conn.close()
+
+
+@mcp.tool()
+def load_repos(
+    repos: list[str],
+    entities: list[str] | None = None,
+    range: str = "6mo",
+    max_rows_per_entity: int = 500,
+    max_concurrency: int = 4,
+) -> dict[str, Any]:
+    """Load GitHub signals for multiple repos in parallel.
+
+    Use for cross-repo comparisons or to bulk-load a set of repos a single author
+    touched. Repo inputs may be owner/name, GitHub URLs, or git@github.com clone lines.
+    """
+    path, conn = _get_db()
+    conn.close()
+    return _load_repos(
+        path,
+        repos=repos,
+        entities=entities,
+        range_spec=range,
+        max_rows_per_entity=max_rows_per_entity,
+        max_concurrency=max_concurrency,
+    )
+
+
+@mcp.tool()
+def load_author_activity(
+    login: str,
+    repos: list[str] | None = None,
+    range: str = "1y",
+    discovery: str = "search",
+    entities: list[str] | None = None,
+    max_repos: int = 10,
+    max_rows_per_entity: int = 500,
+    max_concurrency: int = 4,
+    max_search_pages: int = 10,
+) -> dict[str, Any]:
+    """Load a GitHub user's recent activity across one or many repos.
+
+    Use for author-centric questions: commits, PRs, issues, and optionally reviews.
+    If `repos` is omitted, repohealth discovers repos automatically. The default
+    discovery mode uses `/search/commits` for cross-org coverage; `discovery="owned"`
+    uses `/users/{login}/repos`.
+    """
+    path, conn = _get_db()
+    conn.close()
+    return _load_author_activity(
+        path,
+        login=login,
+        repos=repos,
+        range_spec=range,
+        discovery=discovery,
+        entities=entities,
+        max_repos=max_repos,
+        max_rows_per_entity=max_rows_per_entity,
+        max_concurrency=max_concurrency,
+        max_search_pages=max_search_pages,
+    )
+
+
+@mcp.tool()
+def search_repos(
+    query: str | None = None,
+    owner: str | None = None,
+    language: str | None = None,
+    topic: str | None = None,
+    sort: str = "updated",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Search GitHub repositories without loading their signals.
+
+    Use to discover candidate repos before calling `load_repos` or for a short list
+    of active/popular repos by owner, language, topic, or keyword.
+    """
+    client = _get_client()
+    try:
+        return _search_repos(
+            client,
+            query=query,
+            owner=owner,
+            language=language,
+            topic=topic,
+            sort=sort,
+            limit=limit,
+        )
+    finally:
+        client.close()
 
 
 @mcp.tool()
@@ -330,11 +432,61 @@ FROM per_pr
 JOIN reviewers USING (repo)
 GROUP BY per_pr.repo;
 ```
+
+## author_commits_across_repos
+
+```sql
+SELECT repo, COUNT(*) AS commits
+FROM commits
+WHERE author = :login AND committed_at > date('now','-1 year')
+GROUP BY repo
+ORDER BY commits DESC;
+```
+
+## author_review_load
+
+```sql
+SELECT repo, COUNT(*) AS reviews
+FROM pr_reviews
+WHERE reviewer = :login AND submitted_at > date('now','-1 year')
+GROUP BY repo
+ORDER BY reviews DESC;
+```
+
+## org_active_maintainers
+
+```sql
+SELECT substr(repo, 1, instr(repo, '/') - 1) AS org,
+       COUNT(DISTINCT author) AS active_authors,
+       COUNT(DISTINCT repo)   AS repos
+FROM contributors
+WHERE commits > 0
+GROUP BY org
+ORDER BY active_authors DESC;
+```
 """
 
 
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _range_condition(column: str, range_spec: str) -> str:
+    """Return a conservative SQLite date predicate for prompt scaffolds."""
+    relative = {
+        "30d": "date('now','-30 days')",
+        "90d": "date('now','-90 days')",
+        "6mo": "date('now','-6 months')",
+        "1y": "date('now','-1 year')",
+    }
+    if range_spec == "all":
+        return "1=1"
+    if ".." in range_spec:
+        start, end = range_spec.split("..", 1)
+        if start and end:
+            return f"date({column}) BETWEEN date({_sql_literal(start)}) AND date({_sql_literal(end)})"
+    start_expr = relative.get(range_spec, relative["1y"])
+    return f"date({column}) >= {start_expr}"
 
 
 @mcp.resource("repo://schema")
@@ -586,6 +738,90 @@ SELECT COUNT(*) AS prs_with_review_comments,
        median(comments) AS median_comments_per_pr,
        MAX(comments) AS max_comments_on_one_pr
 FROM per_pr;
+```
+"""
+
+
+@mcp.prompt()
+def author_activity_query(login: str, range: str = "1y") -> str:
+    """SQL scaffold for a given GitHub user's recent activity."""
+    login_sql = _sql_literal(login)
+    commit_range = _range_condition("committed_at", range)
+    pr_range = _range_condition("created_at", range)
+    issue_range = _range_condition("created_at", range)
+    review_range = _range_condition("submitted_at", range)
+    return f"""\
+What has {login} been doing recently ({range})? Run this UNION across activity tables
+after calling load_author_activity. The review arm returns rows only when `pr_reviews`
+was included in the loaded entities.
+
+```sql
+SELECT 'commit' AS kind, repo, committed_at AS at, message AS title
+FROM commits
+WHERE author={login_sql} AND {commit_range}
+UNION ALL
+SELECT 'pr' AS kind, repo, created_at AS at, title
+FROM prs
+WHERE author={login_sql} AND {pr_range}
+UNION ALL
+SELECT 'issue' AS kind, repo, created_at AS at, title
+FROM issues
+WHERE author={login_sql} AND {issue_range}
+UNION ALL
+SELECT 'review' AS kind, repo, submitted_at AS at, NULL AS title
+FROM pr_reviews
+WHERE reviewer={login_sql} AND {review_range}
+ORDER BY at DESC
+LIMIT 200;
+```
+"""
+
+
+@mcp.prompt()
+def maintainer_overlap_query(repos: list[str]) -> str:
+    """SQL scaffold for maintainers active across all selected repos."""
+    quoted = ", ".join(_sql_literal(repo) for repo in repos)
+    return f"""\
+Maintainers active in all of {", ".join(repos)}:
+
+```sql
+SELECT author,
+       COUNT(DISTINCT repo) AS repos_touched,
+       SUM(commits) AS total_commits
+FROM contributors
+WHERE repo IN ({quoted}) AND commits > 0
+GROUP BY author
+HAVING COUNT(DISTINCT repo) = {len(repos)}
+ORDER BY total_commits DESC;
+```
+"""
+
+
+@mcp.prompt()
+def compare_repos_activity_query(repos: list[str], range: str = "6mo") -> str:
+    """SQL scaffold for apples-to-apples maintainer activity across repos."""
+    quoted = ", ".join(_sql_literal(repo) for repo in repos)
+    commit_range = _range_condition("ca.week_start_at", range)
+    contributor_range = _range_condition("c.week_start_at", range)
+    release_range = _range_condition("rel.published_at", range)
+    pr_range = _range_condition("p.created_at", range)
+    return f"""\
+Cross-repo activity for {", ".join(repos)} ({range} window):
+
+```sql
+WITH active_repos AS (SELECT DISTINCT repo FROM repos WHERE repo IN ({quoted}))
+SELECT r.repo,
+       (SELECT SUM(total_commits) FROM commit_activity ca
+          WHERE ca.repo=r.repo AND {commit_range}) AS commits,
+       (SELECT COUNT(DISTINCT author) FROM contributors c
+          WHERE c.repo=r.repo AND c.commits>0 AND {contributor_range}) AS active_authors,
+       (SELECT COUNT(*) FROM releases rel
+          WHERE rel.repo=r.repo AND {release_range}) AS releases,
+       (SELECT median(julianday(merged_at)-julianday(created_at))
+          FROM prs p
+          WHERE p.repo=r.repo AND p.merged_at IS NOT NULL AND {pr_range}
+       ) AS median_merge_days
+FROM active_repos r;
 ```
 """
 

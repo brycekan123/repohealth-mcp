@@ -23,6 +23,7 @@ from ..loaders.releases import load_releases
 from ..loaders.repo_meta import load_repo_meta
 from ..loaders.star_history import load_star_history
 from ..loaders.workflow_runs import load_workflow_runs
+from ..util import normalize_repo
 
 DEFAULT_ENTITIES = ("prs", "issues", "releases", "commit_activity", "contributors")
 VALID_ENTITIES = (
@@ -125,6 +126,7 @@ def load_repo(
     max_rows_per_entity: int = 500,
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    repo = normalize_repo(repo)
     _validate_repo(repo)
     _validate_entities(entities)
 

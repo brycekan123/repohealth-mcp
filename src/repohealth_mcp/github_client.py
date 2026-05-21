@@ -14,7 +14,7 @@ import httpx
 import yaml
 
 DEFAULT_BASE_URL = "https://api.github.com"
-USER_AGENT = "repohealth-mcp/0.1.0"
+USER_AGENT = "repohealth-mcp/0.3.0"
 
 _RETRY_BACKOFFS = [1.0, 2.0, 4.0]
 _STATS_BACKOFFS = [2.0, 4.0, 8.0]

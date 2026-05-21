@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from ..util import normalize_repo
 from .load_repo import VALID_ENTITIES, load_repo
 
 _ENTITY_TABLES = {
@@ -33,6 +34,7 @@ def refresh_repo(
     max_rows_per_entity: int = 500,
     now: datetime | None = None,
 ) -> dict:
+    repo = normalize_repo(repo)
     for entity in entities:
         if entity not in VALID_ENTITIES:
             raise ValueError(f"unknown entity {entity}")

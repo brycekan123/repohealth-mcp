@@ -1,11 +1,14 @@
 from repohealth_mcp.server import (
+    author_activity_query,
     compare_repos_query,
+    compare_repos_activity_query,
     contributor_health_query,
     ci_health_query,
     commit_history_query,
     dep_health_query,
     dep_audit_query,
     file_hotspots_query,
+    maintainer_overlap_query,
     release_cadence_query,
     review_comment_volume_query,
     review_responsiveness_query,
@@ -82,3 +85,28 @@ def test_file_hotspots_query_references_commit_files() -> None:
 def test_review_comment_volume_query_references_pr_review_comments() -> None:
     body = review_comment_volume_query("o/r")
     assert "pr_review_comments" in body
+
+
+def test_author_activity_query_prompt_returns_sql() -> None:
+    text = author_activity_query("gaearon")
+    assert "author" in text
+    assert "gaearon" in text
+    assert "date(committed_at) >= date('now','-1 year')" in text
+    assert "date(created_at) >= date('now','-1 year')" in text
+
+
+def test_maintainer_overlap_query_prompt_returns_sql() -> None:
+    text = maintainer_overlap_query(["rails/rails", "django/django"])
+    assert "rails/rails" in text and "django/django" in text
+
+
+def test_compare_repos_activity_query_prompt_returns_sql() -> None:
+    text = compare_repos_activity_query(["rails/rails", "django/django"])
+    assert "rails/rails" in text and "django/django" in text
+    assert "date(ca.week_start_at) >= date('now','-6 months')" in text
+    assert "date(p.created_at) >= date('now','-6 months')" in text
+
+
+def test_author_activity_query_prompt_supports_explicit_date_range() -> None:
+    text = author_activity_query("gaearon", range="2026-01-01..2026-02-01")
+    assert "date(committed_at) BETWEEN date('2026-01-01') AND date('2026-02-01')" in text

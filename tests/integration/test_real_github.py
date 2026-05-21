@@ -8,6 +8,8 @@ from repohealth_mcp.database import connect, init_schema
 from repohealth_mcp.github_client import GitHubClient, resolve_token
 from repohealth_mcp.loaders.releases import load_releases
 from repohealth_mcp.loaders.repo_meta import load_repo_meta
+from repohealth_mcp.tools.load_author_activity import load_author_activity
+from repohealth_mcp.tools.search_repos import search_repos
 
 pytestmark = pytest.mark.integration
 
@@ -150,3 +152,51 @@ def test_real_pr_review_comments(conn, client) -> None:
         max_rows=10,
     )
     assert result.row_count >= 0
+
+
+def test_search_repos_returns_results_for_defunkt(client) -> None:
+    result = search_repos(client, owner="defunkt", limit=3)
+    assert result["total_count"] >= 1
+    assert len(result["repos"]) >= 1
+    assert all("/" in row["repo"] for row in result["repos"])
+
+
+def test_load_author_activity_owned_discovery_against_defunkt(tmp_path: Path) -> None:
+    if not resolve_token():
+        pytest.skip("GITHUB_TOKEN not set")
+    db_path = tmp_path / "v3_int.sqlite"
+    conn = connect(db_path)
+    init_schema(conn)
+    conn.close()
+
+    result = load_author_activity(
+        db_path,
+        login="defunkt",
+        discovery="owned",
+        range_spec="1y",
+        max_repos=2,
+        max_rows_per_entity=50,
+    )
+    assert result["login"] == "defunkt"
+    assert result["discovery_source"] == "owned"
+    assert len(result["discovered_repos"]) >= 1
+
+
+def test_load_author_activity_search_discovery_against_defunkt(tmp_path: Path) -> None:
+    if not resolve_token():
+        pytest.skip("GITHUB_TOKEN not set")
+    db_path = tmp_path / "v3_int_search.sqlite"
+    conn = connect(db_path)
+    init_schema(conn)
+    conn.close()
+
+    result = load_author_activity(
+        db_path,
+        login="defunkt",
+        discovery="search",
+        range_spec="6mo",
+        max_repos=2,
+        max_rows_per_entity=50,
+    )
+    assert result["discovery_source"] == "search"
+    assert isinstance(result["discovered_repos"], list)

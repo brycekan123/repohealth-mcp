@@ -126,7 +126,7 @@ load_author_activity(
 ```
 
 - If `repos` is given: `discovery_source="caller"`, skip discovery, force `commits` into `entities`, fan out via `load_repos`.
-- If `repos is None` and `discovery="search"`: call internal helper `_discover_repos_for_author(login, max_repos)` which paginates `/search/commits?q=author:<login>&sort=author-date&order=desc` (Accept: `application/vnd.github+json`) and aggregates unique `repository.full_name` values until `max_repos` distinct repos have been seen or the page budget runs out (cap: 10 search pages of 100 = 10 search-API calls max per discovery).
+- If `repos is None` and `discovery="search"`: call internal helper `_discover_repos_for_author(login, max_repos, range_start, range_end)` which paginates `/search/commits?q=author:<login> author-date:>=<range_start> author-date:<=<range_end>&sort=author-date&order=desc` (Accept: `application/vnd.github+json`) and aggregates unique `repository.full_name` values until `max_repos` distinct repos have been seen or the page budget runs out (cap: 10 search pages of 100 = 10 search-API calls max per discovery).
 - If `repos is None` and `discovery="owned"`: `GET /users/{login}/repos?sort=pushed&per_page=max_repos`, drop archived/forks, then load.
 - Default `entities` is `["commits","prs","issues"]` to keep the discovery+load cost bounded. `pr_reviews` is *not* in the default because it fans out one API call per cached PR — at `max_repos=10` × ~500 PRs that's 5000 calls, the full hourly budget. Callers can opt in by passing `entities=["commits","prs","issues","pr_reviews"]` explicitly when they specifically want review activity.
 - Writes one row to `author_searches` regardless of mode.

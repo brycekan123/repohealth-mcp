@@ -244,3 +244,15 @@ def test_repos_table_has_funding_columns(db_path: Path) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(repos)").fetchall()}
     assert "funding_json" in cols
     assert "has_sponsors" in cols
+
+
+def test_author_searches_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(author_searches)").fetchall()}
+    expected = {"login", "discovery", "range_start", "range_end", "repos_json", "discovered_at"}
+    assert expected.issubset(cols)
+
+
+def test_author_searches_in_expected_tables_set() -> None:
+    assert "author_searches" in EXPECTED_TABLES

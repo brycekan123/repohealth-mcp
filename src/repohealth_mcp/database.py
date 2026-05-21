@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "dependencies",
     "star_history",
     "workflow_runs",
+    "author_searches",
 }
 
 SCHEMA_SQL = """
@@ -202,6 +203,17 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     PRIMARY KEY (repo, id)
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_repo_created ON workflow_runs(repo, created_at);
+
+CREATE TABLE IF NOT EXISTS author_searches (
+    login           TEXT NOT NULL,
+    discovery       TEXT NOT NULL,
+    range_start     TEXT NOT NULL,
+    range_end       TEXT NOT NULL,
+    repos_json      TEXT NOT NULL,
+    discovered_at   TEXT NOT NULL,
+    PRIMARY KEY (login, discovery, range_start, range_end)
+);
+CREATE INDEX IF NOT EXISTS idx_author_searches_login ON author_searches(login);
 """
 
 

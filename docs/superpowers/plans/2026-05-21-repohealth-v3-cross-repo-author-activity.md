@@ -1109,6 +1109,8 @@ def discover_repos_by_commits(
     max_repos: int = 10,
     max_pages: int = 10,
     per_page: int = 100,
+    range_start: str | None = None,
+    range_end: str | None = None,
 ) -> list[str]:
     """Aggregate unique `owner/name` from /search/commits?q=author:LOGIN.
 
@@ -1118,7 +1120,12 @@ def discover_repos_by_commits(
     if not login:
         raise ValueError("login is required")
 
-    q = f"author:{login}"
+    query_parts = [f"author:{login}"]
+    if range_start:
+        query_parts.append(f"author-date:>={range_start}")
+    if range_end:
+        query_parts.append(f"author-date:<={range_end}")
+    q = " ".join(query_parts)
     seen: list[str] = []
     seen_set: set[str] = set()
     url: str | Any = "/search/repositories-stub"  # overwritten on first iteration

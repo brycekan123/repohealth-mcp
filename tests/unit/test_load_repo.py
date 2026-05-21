@@ -77,7 +77,7 @@ def test_load_repo_rejects_unknown_entity(conn) -> None:
 
 def test_load_repo_rejects_invalid_repo_format(conn) -> None:
     client = _stub_client_for_all_entities()
-    with pytest.raises(ValueError, match="repo format"):
+    with pytest.raises(ValueError, match="parse repo|repo format"):
         load_repo(
             conn,
             client,
@@ -87,6 +87,46 @@ def test_load_repo_rejects_invalid_repo_format(conn) -> None:
             max_rows_per_entity=500,
             now=datetime(2026, 5, 20, tzinfo=timezone.utc),
         )
+
+
+def test_load_repo_normalizes_url_inputs(tmp_path) -> None:
+    conn = connect(tmp_path / "normalize.sqlite")
+    init_schema(conn)
+    client = MagicMock()
+
+    repo_meta_body = {
+        "full_name": "o/r",
+        "description": "t",
+        "default_branch": "main",
+        "stargazers_count": 1,
+        "forks_count": 0,
+        "open_issues_count": 0,
+        "created_at": "2020-01-01T00:00:00Z",
+        "pushed_at": "2026-01-01T00:00:00Z",
+        "archived": False,
+        "disabled": False,
+        "license": {"spdx_id": "MIT"},
+    }
+
+    def _get(url, **_):
+        if url == "/repos/o/r":
+            return (repo_meta_body, ResponseMeta(200, 4999, None, None))
+        if "FUNDING.yml" in url:
+            raise GitHubError(404, "no funding")
+        return ([], ResponseMeta(200, 4999, None, None))
+
+    client.get.side_effect = _get
+    client.paginate.return_value = iter([])
+    result = load_repo(
+        conn,
+        client,
+        repo="https://github.com/o/r/pulls/1",
+        entities=["prs"],
+        range_spec="6mo",
+        max_rows_per_entity=500,
+        now=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+    assert result["repo"] == "o/r"
 
 
 def test_load_repo_clamps_max_rows(conn) -> None:
