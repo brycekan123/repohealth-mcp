@@ -6,11 +6,15 @@ It covers the usual maintenance signals (PRs, issues, releases, commit activity,
 
 ```text
 is tanstack/query still actively maintained?
-compare react-query, swr, and tanstack-query
+compare axios/axios, sindresorhus/ky, and node-fetch/node-fetch
 release cadence for vercel/next.js over the last year
 who are the top contributors to facebook/react this quarter?
 which files are hotspots in tanstack/query lately?
 what is the CI pass rate for vercel/next.js?
+is gaearon still shipping code lately?
+what has sindresorhus been working on across his repos?
+compare maintainer activity across rails/rails, django/django, and laravel/laravel
+which authors maintain all of kubernetes/kubernetes, helm/helm, and istio/istio?
 ```
 
 Works with any public GitHub repo.
@@ -51,12 +55,13 @@ Verify with `codex mcp list`.
 
 ## ⚡ How it works
 
-The server exposes four MCP surfaces that a client uses in sequence:
+The server exposes MCP surfaces that a client uses in sequence:
 
-1. **`plan_data_load(question)`** — LLM parses NL into `{repos, entities, range}`.
+1. **`plan_data_load(question)`** — LLM parses NL into `{repos, entities, range, author}`.
 2. **`check_coverage(repo, entity, range)`** — does the local snapshot already cover this slice, and is it stale?
 3. **`load_repo(repo, entities, range)`** — fetch what's missing from GitHub into local SQLite.
-4. **`run_sql(query)`** — read-only `SELECT` / `WITH` against the snapshot (1000-row cap).
+4. **`load_repos(...)` / `load_author_activity(...)`** — fan out across repos or discover a user's active repos.
+5. **`run_sql(query)`** — read-only `SELECT` / `WITH` against the snapshot (1000-row cap).
 
 Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` to force-refetch.
 
@@ -67,14 +72,17 @@ Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` t
 | `plan_data_load` | NL question → repos, entities, date range |
 | `check_coverage` | Is `(repo, entity, range)` cached locally, how old is it, and is it stale? |
 | `load_repo` | Fetch missing data from GitHub into local SQLite |
+| `load_repos` | Fan-out version of `load_repo` — load multiple repos in parallel |
+| `load_author_activity` | Load a GitHub user's recent activity across one or many repos; discovers repos automatically via `/search/commits` by default |
+| `search_repos` | Wrap GitHub `/search/repositories` for repo discovery before loading |
 | `refresh_repo` | Drop cached rows for a slice and re-load |
 | `run_sql` | Read-only `SELECT` / `WITH` against the snapshot (1000-row cap) |
 | `get_loaded_tables` | Current tables, columns, row counts |
 | `list_loaded_repos` | All cached `(repo, entity, range)` snapshots |
 
-**Resources:** `repo://schema`, `repo://signals` (canonical SQL recipes for activity, merge time, release cadence, bus factor, active maintainers, backlog, commits by author, CI pass rate, stars growth, dependency licenses, review responsiveness, file hotspots, and review-comment volume).
+**Resources:** `repo://schema`, `repo://signals` (canonical SQL recipes for activity, merge time, release cadence, bus factor, active maintainers, backlog, commits by author, CI pass rate, stars growth, dependency licenses, review responsiveness, file hotspots, review-comment volume, author commits across repos, author review load, and org active maintainers).
 
-**Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`, `commit_history_query`, `ci_health_query`, `dep_audit_query`, `star_trajectory_query`, `review_responsiveness_query`, `file_hotspots_query`, `review_comment_volume_query`.
+**Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`, `commit_history_query`, `ci_health_query`, `dep_audit_query`, `star_trajectory_query`, `review_responsiveness_query`, `file_hotspots_query`, `review_comment_volume_query`, `author_activity_query`, `maintainer_overlap_query`, `compare_repos_activity_query`.
 
 ## 🗄 Data model
 
@@ -95,6 +103,7 @@ One SQLite file per user, partitioned by a `repo` column so cross-repo SQL is fr
 | `dependencies` | `/dependency-graph/sbom` | one row per package |
 | `star_history` | `/stargazers` (star+json) | one row per star event |
 | `workflow_runs` | `/actions/runs` | one row per CI run |
+| `author_searches` | bookkeeping | one row per author discovery window |
 | `snapshots` | bookkeeping | one row per `(repo, entity, range)` slice |
 
 A `median()` aggregate UDF is registered for SQL.
@@ -118,7 +127,7 @@ The agentic pipeline from a natural-language question to a cited answer:
    │   repohealth-mcp server  (FastMCP, stdio)                   │
    │                                                             │
    │   1.  plan_data_load(question)                              │
-   │         └─► Gemini → { repos, entities, range_spec }        │
+   │         └─► Gemini → { repos, entities, range_spec, author }│
    │                                                             │
    │   2.  check_coverage(repo, entity, range)                   │
    │         └─► SELECT from snapshots → hit / miss              │
@@ -139,7 +148,10 @@ The agentic pipeline from a natural-language question to a cited answer:
    │                  Local SQLite snapshot                      │
    │                  (one file, partitioned by repo)            │
    │                                                             │
-   │   4.  run_sql(query)                                        │
+   │   4.  load_repos / load_author_activity                     │
+   │         └─► multi-repo fan-out or author repo discovery      │
+   │                                                             │
+   │   5.  run_sql(query)                                        │
    │         └─► read-only SELECT / WITH  →  rows                │
    └─────────────────────────────────────────────────────────────┘
                                 │
