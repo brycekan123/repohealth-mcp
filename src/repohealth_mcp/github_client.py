@@ -91,15 +91,21 @@ class GitHubClient:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def get(self, path_or_url: str, **params: Any) -> tuple[Any, ResponseMeta]:
+    def get(
+        self,
+        path_or_url: str,
+        media_type: str | None = None,
+        **params: Any,
+    ) -> tuple[Any, ResponseMeta]:
         """Single GET with retries. Returns (body, meta)."""
         url = path_or_url if path_or_url.startswith("http") else f"{self._base_url}{path_or_url}"
+        headers = {"Accept": media_type} if media_type else None
 
         for attempt, backoff in enumerate([0.0, *_RETRY_BACKOFFS]):
             if backoff:
                 self._sleep(backoff)
             try:
-                response = self._client.get(url, params=params or None)
+                response = self._client.get(url, params=params or None, headers=headers)
             except httpx.RequestError as e:
                 if attempt == len(_RETRY_BACKOFFS):
                     raise GitHubError(0, f"network error: {e}") from e
@@ -109,7 +115,7 @@ class GitHubClient:
                 for stats_backoff in _STATS_BACKOFFS:
                     self._sleep(stats_backoff)
                     try:
-                        response = self._client.get(url, params=params or None)
+                        response = self._client.get(url, params=params or None, headers=headers)
                     except httpx.RequestError as e:
                         raise GitHubError(0, f"network error: {e}") from e
                     if response.status_code != 202:
@@ -126,14 +132,20 @@ class GitHubClient:
 
         raise GitHubError(0, "exhausted retries")
 
-    def paginate(self, path: str, max_rows: int | None = None, **params: Any) -> Iterator[dict]:
+    def paginate(
+        self,
+        path: str,
+        max_rows: int | None = None,
+        media_type: str | None = None,
+        **params: Any,
+    ) -> Iterator[dict]:
         """Iterate items across paginated endpoints; respects max_rows cap."""
         url: str | None = path if path.startswith("http") else f"{self._base_url}{path}"
         if params:
             url = str(httpx.URL(url, params=params))
         yielded = 0
         while url is not None:
-            body, meta = self.get(url)
+            body, meta = self.get(url, media_type=media_type)
             if not isinstance(body, list):
                 raise GitHubError(0, f"expected list from paginated endpoint, got {type(body)}")
             for item in body:

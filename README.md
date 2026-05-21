@@ -2,11 +2,15 @@
 
 A Model Context Protocol (MCP) server that answers **dep-health and repo-analytics** questions about public GitHub repos. It plans → fetches → caches GitHub data into a local SQLite snapshot, then runs read-only SQL aggregations on it.
 
+It covers the usual maintenance signals (PRs, issues, releases, commit activity, contributors) plus commit metadata, per-commit file diffs, PR reviews, inline review comments, dependency SBOMs, star history, workflow runs, funding metadata, and cache freshness.
+
 ```text
 is tanstack/query still actively maintained?
 compare react-query, swr, and tanstack-query
 release cadence for vercel/next.js over the last year
 who are the top contributors to facebook/react this quarter?
+which files are hotspots in tanstack/query lately?
+what is the CI pass rate for vercel/next.js?
 ```
 
 Works with any public GitHub repo.
@@ -50,7 +54,7 @@ Verify with `codex mcp list`.
 The server exposes four MCP surfaces that a client uses in sequence:
 
 1. **`plan_data_load(question)`** — LLM parses NL into `{repos, entities, range}`.
-2. **`check_coverage(repo, entity, range)`** — does the local snapshot already cover this slice?
+2. **`check_coverage(repo, entity, range)`** — does the local snapshot already cover this slice, and is it stale?
 3. **`load_repo(repo, entities, range)`** — fetch what's missing from GitHub into local SQLite.
 4. **`run_sql(query)`** — read-only `SELECT` / `WITH` against the snapshot (1000-row cap).
 
@@ -61,16 +65,16 @@ Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` t
 | Tool | Purpose |
 |---|---|
 | `plan_data_load` | NL question → repos, entities, date range |
-| `check_coverage` | Is `(repo, entity, range)` already cached locally? |
+| `check_coverage` | Is `(repo, entity, range)` cached locally, how old is it, and is it stale? |
 | `load_repo` | Fetch missing data from GitHub into local SQLite |
 | `refresh_repo` | Drop cached rows for a slice and re-load |
 | `run_sql` | Read-only `SELECT` / `WITH` against the snapshot (1000-row cap) |
 | `get_loaded_tables` | Current tables, columns, row counts |
 | `list_loaded_repos` | All cached `(repo, entity, range)` snapshots |
 
-**Resources:** `repo://schema`, `repo://signals` (canonical SQL recipes for activity, merge time, release cadence, bus factor, active maintainers, backlog).
+**Resources:** `repo://schema`, `repo://signals` (canonical SQL recipes for activity, merge time, release cadence, bus factor, active maintainers, backlog, commits by author, CI pass rate, stars growth, dependency licenses, review responsiveness, file hotspots, and review-comment volume).
 
-**Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`.
+**Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`, `commit_history_query`, `ci_health_query`, `dep_audit_query`, `star_trajectory_query`, `review_responsiveness_query`, `file_hotspots_query`, `review_comment_volume_query`.
 
 ## 🗄 Data model
 
@@ -78,12 +82,19 @@ One SQLite file per user, partitioned by a `repo` column so cross-repo SQL is fr
 
 | Table | Source | Grain |
 |---|---|---|
-| `repos` | `/repos/{owner}/{name}` | one row per repo |
+| `repos` | `/repos/{owner}/{name}` + `.github/FUNDING.yml` | one row per repo |
 | `prs` | `/pulls` | one row per PR |
 | `issues` | `/issues` (PRs filtered out) | one row per issue |
 | `releases` | `/releases` | one row per release |
 | `commit_activity` | `/stats/commit_activity` | one row per repo-week |
 | `contributors` | `/stats/contributors` | one row per repo-author-week |
+| `commits` | `/commits` | one row per commit |
+| `commit_files` | `/commits/{sha}` | one row per file touched per commit (opt-in) |
+| `pr_reviews` | `/pulls/{n}/reviews` | one row per review (opt-in) |
+| `pr_review_comments` | `/pulls/{n}/comments` | one row per inline review comment (opt-in) |
+| `dependencies` | `/dependency-graph/sbom` | one row per package |
+| `star_history` | `/stargazers` (star+json) | one row per star event |
+| `workflow_runs` | `/actions/runs` | one row per CI run |
 | `snapshots` | bookkeeping | one row per `(repo, entity, range)` slice |
 
 A `median()` aggregate UDF is registered for SQL.
@@ -113,14 +124,17 @@ The agentic pipeline from a natural-language question to a cited answer:
    │         └─► SELECT from snapshots → hit / miss              │
    │                                                             │
    │   3.  load_repo(repo, entities, range)        [on miss]     │
-   │         ├─► repo_meta loader                                │
-   │         └─► ThreadPoolExecutor  (5 workers, parallel)       │
-   │               ├─► prs loader         ─┐                     │
-   │               ├─► issues loader      ─┤                     │
-   │               ├─► releases loader    ─┤── GitHub REST API   │
-   │               ├─► commit_activity    ─┤   (auth, retries,   │
-   │               └─► contributors       ─┘    202 backoff,     │
-   │                          │                 pagination)      │
+   │         ├─► repo_meta + funding loader                      │
+   │         └─► ThreadPoolExecutor  (parallel phases)           │
+   │               ├─► prs / issues / releases                   │
+   │               ├─► commit_activity / contributors            │
+   │               ├─► commits / dependencies / stars / CI       │
+   │               └─► opt-in dependent loaders                  │
+   │                    (commit_files, reviews, review comments) │
+   │                              │                              │
+   │                              ▼                              │
+   │                    GitHub REST API                          │
+   │                    (auth, retries, 202 backoff, pagination) │
    │                          ▼                                  │
    │                  Local SQLite snapshot                      │
    │                  (one file, partitioned by repo)            │
@@ -133,6 +147,8 @@ The agentic pipeline from a natural-language question to a cited answer:
             LLM composes the answer from the SQL rows
 ```
 
+`pr_reviews`, `pr_review_comments`, and `commit_files` are opt-in. Include them in `entities=[...]` explicitly when calling `load_repo`. Each fans out one API call per cached parent row, so `load_repo` stages parent loaders first (`prs` or `commits`) and then runs dependent loaders concurrently. If a requested parent fails, its dependent entity is skipped rather than writing a misleading fresh snapshot from stale parent rows.
+
 **Walk-through — `is tanstack/query still actively maintained?`**
 
 1. `plan_data_load` →
@@ -141,8 +157,8 @@ The agentic pipeline from a natural-language question to a cited answer:
      "entities": ["prs","issues","releases","commit_activity","contributors"],
      "range_spec": "6mo" }
    ```
-2. `check_coverage("tanstack/query", "prs", "2025-11-21", "2026-05-21")` → miss.
-3. `load_repo(...)` opens a fresh `GitHubClient` and one SQLite connection per worker. The five entity loaders run **concurrently**: PRs and issues paginate `sort=created&direction=desc` and break at the range boundary (no wasted pages); the two `/stats/*` endpoints handle `202 still computing` with bounded retries. Loader failures land in `result["errors"]` without aborting the whole load.
+2. `check_coverage("tanstack/query", "prs", "2025-11-21", "2026-05-21")` → miss, or hit with `age_seconds` / `stale`.
+3. `load_repo(...)` opens a fresh `GitHubClient` and one SQLite connection per worker. Entity loaders run concurrently where possible: PRs and issues paginate `sort=created&direction=desc` and break at the range boundary; `/stats/*` endpoints handle `202 still computing` with bounded retries; commit metadata, dependencies, stars, workflow runs, reviews, review comments, file diffs, and funding metadata plug into the same cache. Loader failures land in `result["errors"]` without aborting the whole load.
 4. `run_sql` opens a read-only connection (URI `mode=ro`), enforces a `SELECT`/`WITH` allowlist + denylist for `INSERT/UPDATE/DELETE/DROP/ATTACH/PRAGMA`, runs the query, and caps the result at 1000 rows.
 5. The LLM turns the rows into prose, citing the signals it used.
 

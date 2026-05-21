@@ -16,22 +16,31 @@ EXPECTED_TABLES = {
     "commit_activity",
     "contributors",
     "snapshots",
+    "commits",
+    "commit_files",
+    "pr_reviews",
+    "pr_review_comments",
+    "dependencies",
+    "star_history",
+    "workflow_runs",
 }
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS repos (
-    repo            TEXT PRIMARY KEY,
-    description     TEXT,
-    default_branch  TEXT,
-    stars           INTEGER,
-    forks           INTEGER,
+    repo              TEXT PRIMARY KEY,
+    description       TEXT,
+    default_branch    TEXT,
+    stars             INTEGER,
+    forks             INTEGER,
     open_issues_count INTEGER,
-    created_at      TEXT,
-    pushed_at       TEXT,
-    archived        INTEGER,
-    disabled        INTEGER,
-    license         TEXT,
-    cached_at       TEXT NOT NULL
+    created_at        TEXT,
+    pushed_at         TEXT,
+    archived          INTEGER,
+    disabled          INTEGER,
+    license           TEXT,
+    funding_json      TEXT,
+    has_sponsors      INTEGER,
+    cached_at         TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS prs (
@@ -112,6 +121,87 @@ CREATE TABLE IF NOT EXISTS snapshots (
     row_count       INTEGER NOT NULL,
     PRIMARY KEY (repo, entity, range_start, range_end)
 );
+
+CREATE TABLE IF NOT EXISTS commits (
+    repo            TEXT NOT NULL,
+    sha             TEXT NOT NULL,
+    author          TEXT,
+    author_email    TEXT,
+    committed_at    TEXT,
+    message         TEXT,
+    PRIMARY KEY (repo, sha)
+);
+CREATE INDEX IF NOT EXISTS idx_commits_repo_date   ON commits(repo, committed_at);
+CREATE INDEX IF NOT EXISTS idx_commits_repo_author ON commits(repo, author);
+
+CREATE TABLE IF NOT EXISTS commit_files (
+    repo         TEXT NOT NULL,
+    sha          TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    status       TEXT,
+    additions    INTEGER,
+    deletions    INTEGER,
+    changes      INTEGER,
+    PRIMARY KEY (repo, sha, filename)
+);
+CREATE INDEX IF NOT EXISTS idx_commit_files_repo_filename ON commit_files(repo, filename);
+
+CREATE TABLE IF NOT EXISTS pr_reviews (
+    repo            TEXT NOT NULL,
+    pr_number       INTEGER NOT NULL,
+    id              INTEGER NOT NULL,
+    reviewer        TEXT,
+    state           TEXT,
+    submitted_at    TEXT,
+    PRIMARY KEY (repo, pr_number, id)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_reviews_repo_pr ON pr_reviews(repo, pr_number);
+
+CREATE TABLE IF NOT EXISTS pr_review_comments (
+    repo            TEXT NOT NULL,
+    pr_number       INTEGER NOT NULL,
+    id              INTEGER NOT NULL,
+    reviewer        TEXT,
+    body            TEXT,
+    path            TEXT,
+    line            INTEGER,
+    position        INTEGER,
+    created_at      TEXT,
+    PRIMARY KEY (repo, pr_number, id)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_review_comments_repo_pr ON pr_review_comments(repo, pr_number);
+
+CREATE TABLE IF NOT EXISTS dependencies (
+    repo             TEXT NOT NULL,
+    package_name     TEXT NOT NULL,
+    package_manager  TEXT,
+    version          TEXT,
+    license          TEXT,
+    PRIMARY KEY (repo, package_name)
+);
+
+CREATE TABLE IF NOT EXISTS star_history (
+    repo         TEXT NOT NULL,
+    starred_at   TEXT NOT NULL,
+    user         TEXT NOT NULL,
+    PRIMARY KEY (repo, starred_at, user)
+);
+CREATE INDEX IF NOT EXISTS idx_star_history_repo_at ON star_history(repo, starred_at);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    repo              TEXT NOT NULL,
+    id                INTEGER NOT NULL,
+    workflow_name     TEXT,
+    head_branch       TEXT,
+    event             TEXT,
+    status            TEXT,
+    conclusion        TEXT,
+    created_at        TEXT,
+    run_started_at    TEXT,
+    duration_seconds  INTEGER,
+    PRIMARY KEY (repo, id)
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_repo_created ON workflow_runs(repo, created_at);
 """
 
 
@@ -162,3 +252,7 @@ def connect_readonly(path: Path | str | None = None) -> sqlite3.Connection:
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create all tables/indexes if missing. Idempotent."""
     conn.executescript(SCHEMA_SQL)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(repos)").fetchall()}
+    for col, decl in (("funding_json", "TEXT"), ("has_sponsors", "INTEGER")):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE repos ADD COLUMN {col} {decl}")

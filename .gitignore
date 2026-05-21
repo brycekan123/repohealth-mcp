@@ -12,3 +12,6 @@ htmlcov/
 .env
 *.sqlite
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store

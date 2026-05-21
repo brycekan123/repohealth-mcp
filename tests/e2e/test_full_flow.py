@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from repohealth_mcp.database import connect, init_schema
-from repohealth_mcp.github_client import ResponseMeta
+from repohealth_mcp.github_client import GitHubError, ResponseMeta
 from repohealth_mcp.planner import extract_plan_from_text
 from repohealth_mcp.tools.load_repo import load_repo
 from repohealth_mcp.tools.run_sql import run_sql
@@ -27,6 +27,8 @@ def _make_client(
     def _get(url, **_):
         if url == f"/repos/{repo_meta_body['full_name']}":
             return (repo_meta_body, ResponseMeta(200, 4990, None, None))
+        if "FUNDING.yml" in url:
+            raise GitHubError(404, "no funding")
         if "stats/commit_activity" in url:
             return (commit_activity_body, ResponseMeta(200, 4989, None, None))
         if "stats/contributors" in url:

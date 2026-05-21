@@ -26,3 +26,17 @@ def test_signals_resource_includes_sql_examples() -> None:
     content = get_signals_resource()
     assert "```sql" in content
     assert "SELECT" in content
+
+
+def test_signals_resource_includes_v2_recipes() -> None:
+    body = get_signals_resource()
+    for recipe in (
+        "commits_by_author_90d",
+        "ci_pass_rate_90d",
+        "stars_growth_curve",
+        "dependency_license_breakdown",
+        "review_responsiveness",
+        "file_hotspots_90d",
+        "review_comment_volume",
+    ):
+        assert recipe in body, f"missing recipe: {recipe}"

@@ -1,0 +1,25 @@
+{
+  "sbom": {
+    "SPDXID": "SPDXRef-DOCUMENT",
+    "spdxVersion": "SPDX-2.3",
+    "packages": [
+      {
+        "SPDXID": "SPDXRef-Package-pkg:npm/lodash@4.17.21",
+        "name": "npm:lodash",
+        "versionInfo": "4.17.21",
+        "licenseConcluded": "MIT"
+      },
+      {
+        "SPDXID": "SPDXRef-Package-pkg:pypi/requests@2.31.0",
+        "name": "pypi:requests",
+        "versionInfo": "2.31.0",
+        "licenseConcluded": "Apache-2.0"
+      },
+      {
+        "SPDXID": "SPDXRef-Package-pkg:githubactions/actions/checkout@v4",
+        "name": "actions:actions/checkout",
+        "versionInfo": "v4"
+      }
+    ]
+  }
+}

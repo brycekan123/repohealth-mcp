@@ -62,6 +62,12 @@ def check_coverage_tool(
             range_start=range_start,
             range_end=range_end,
         )
-        return {"cached": status.cached, "cached_at": status.cached_at, "rows": status.rows}
+        return {
+            "cached": status.cached,
+            "cached_at": status.cached_at,
+            "rows": status.rows,
+            "age_seconds": status.age_seconds,
+            "stale": status.stale,
+        }
     finally:
         conn.close()

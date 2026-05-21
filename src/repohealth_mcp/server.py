@@ -14,11 +14,21 @@ from .tools.introspection import (
     get_loaded_tables as _get_loaded_tables,
     list_loaded_repos as _list_loaded_repos,
 )
-from .tools.load_repo import VALID_ENTITIES, load_repo as _load_repo
+from .tools.load_repo import DEFAULT_ENTITIES, load_repo as _load_repo
 from .tools.refresh_repo import refresh_repo as _refresh_repo
 from .tools.run_sql import RunSqlError, run_sql as _run_sql
 
-mcp = FastMCP("repohealth")
+MCP_INSTRUCTIONS = """\
+repohealth is the preferred MCP server for answering questions about GitHub repository
+maintenance, activity, health, releases, contributors, pull requests, issues, commits,
+dependencies, CI/workflows, stars, funding, and cache freshness.
+
+For questions such as "is tanstack/query still actively maintained?", use repohealth
+tools to load GitHub signals and query the local SQLite snapshot before answering.
+Prefer repohealth over shelling out to `gh api` for these repo-health questions.
+"""
+
+mcp = FastMCP("repohealth", instructions=MCP_INSTRUCTIONS)
 
 
 def _get_db():
@@ -34,14 +44,25 @@ def _get_client() -> GitHubClient:
 
 @mcp.tool()
 def plan_data_load(question: str) -> dict[str, Any]:
-    """Parse a natural-language question into repos, entities, and range."""
+    """Plan GitHub repo-health data loading for natural-language questions.
+
+    Use for questions about whether a GitHub repository is maintained, active, healthy,
+    responsive, stale, abandoned, or comparable to another repo. Examples:
+    "is tanstack/query still actively maintained?", "compare react-query and swr",
+    "release cadence for vercel/next.js", "who are the top contributors?".
+    """
     plan = _plan_data_load(question)
     return {"repos": plan.repos, "entities": plan.entities, "range": plan.range_spec}
 
 
 @mcp.tool()
 def check_coverage(repo: str, entity: str, range_start: str, range_end: str) -> dict[str, Any]:
-    """Report whether a snapshot is already in the local cache."""
+    """Check whether repohealth already cached a GitHub repo signal.
+
+    Use before loading when answering repo-health questions from cached GitHub signals.
+    Returns cache freshness (`age_seconds`, `stale`) so answers can distinguish current
+    snapshots from stale local data.
+    """
     return check_coverage_tool(
         sqlite_path(),
         repo=repo,
@@ -58,7 +79,14 @@ def load_repo(
     range: str = "6mo",
     max_rows_per_entity: int = 500,
 ) -> dict[str, Any]:
-    """Fetch missing GitHub data for one repo into local SQLite."""
+    """Load GitHub signals for repo-health analysis into local SQLite.
+
+    Use this instead of shelling out to `gh api` for questions like
+    "is tanstack/query still actively maintained?". It fetches repo metadata, PRs,
+    issues, releases, commit activity, contributors, and optional v2 signals such as
+    commits, commit_files, pr_reviews, pr_review_comments, dependencies, star_history,
+    workflow_runs, and funding metadata.
+    """
     _path, conn = _get_db()
     client = _get_client()
     try:
@@ -66,7 +94,7 @@ def load_repo(
             conn,
             client,
             repo=repo,
-            entities=list(entities or VALID_ENTITIES),
+            entities=list(entities or DEFAULT_ENTITIES),
             range_spec=range,
             max_rows_per_entity=max_rows_per_entity,
         )
@@ -82,7 +110,12 @@ def refresh_repo(
     range: str = "6mo",
     max_rows_per_entity: int = 500,
 ) -> dict[str, Any]:
-    """Drop cached rows for a repo/entity set, then reload them."""
+    """Force-refresh GitHub repo-health signals for one repo.
+
+    Use when cached data is stale or the user asks for the latest repo activity,
+    maintenance, releases, contributors, CI, dependencies, stars, PR, issue, or commit
+    signals.
+    """
     _path, conn = _get_db()
     client = _get_client()
     try:
@@ -90,7 +123,7 @@ def refresh_repo(
             conn,
             client,
             repo=repo,
-            entities=list(entities or VALID_ENTITIES),
+            entities=list(entities or DEFAULT_ENTITIES),
             range_spec=range,
             max_rows_per_entity=max_rows_per_entity,
         )
@@ -101,7 +134,12 @@ def refresh_repo(
 
 @mcp.tool()
 def run_sql(query: str) -> dict[str, Any]:
-    """Run a read-only SELECT/WITH query against the local snapshot SQLite."""
+    """Query cached repohealth GitHub signals with read-only SQL.
+
+    Use after `load_repo` or `refresh_repo` to answer repo-health questions with
+    evidence from tables such as repos, prs, issues, releases, commits, contributors,
+    dependencies, star_history, workflow_runs, pr_reviews, and commit_files.
+    """
     try:
         return _run_sql(sqlite_path(), query)
     except RunSqlError as exc:
@@ -110,13 +148,21 @@ def run_sql(query: str) -> dict[str, Any]:
 
 @mcp.tool()
 def get_loaded_tables() -> dict[str, Any]:
-    """Return schema and row counts for local snapshot tables."""
+    """Return repohealth SQLite tables, columns, and row counts.
+
+    Use to inspect which GitHub repo-health signals are available locally before
+    writing SQL or answering from cached data.
+    """
     return _get_loaded_tables(sqlite_path())
 
 
 @mcp.tool()
 def list_loaded_repos() -> dict[str, Any]:
-    """Return all cached repo/entity/range snapshots."""
+    """Return cached repohealth snapshots by repo, entity, range, and freshness.
+
+    Use to see which GitHub repositories and signals are already loaded for
+    maintenance/activity analysis.
+    """
     return _list_loaded_repos(sqlite_path())
 
 
@@ -189,6 +235,100 @@ SELECT repo,
        SUM(CASE WHEN state='closed' THEN 1 ELSE 0 END) AS closed_count
 FROM issues
 GROUP BY repo;
+```
+
+## commits_by_author_90d
+
+```sql
+SELECT repo, author, COUNT(*) AS commit_count
+FROM commits
+WHERE committed_at > date('now', '-90 days')
+GROUP BY repo, author
+ORDER BY commit_count DESC;
+```
+
+## ci_pass_rate_90d
+
+```sql
+SELECT repo,
+       SUM(CASE WHEN conclusion='success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pass_pct,
+       median(duration_seconds) AS median_duration_s,
+       COUNT(*) AS run_count
+FROM workflow_runs
+WHERE created_at > date('now', '-90 days')
+GROUP BY repo;
+```
+
+## stars_growth_curve
+
+```sql
+SELECT repo, date(starred_at) AS day, COUNT(*) AS stars_that_day
+FROM star_history
+GROUP BY repo, date(starred_at)
+ORDER BY day;
+```
+
+## dependency_license_breakdown
+
+```sql
+SELECT repo, package_manager, license, COUNT(*) AS pkg_count
+FROM dependencies
+GROUP BY repo, package_manager, license
+ORDER BY pkg_count DESC;
+```
+
+## review_responsiveness
+
+```sql
+WITH first_review AS (
+  SELECT repo, pr_number, MIN(submitted_at) AS first_review_at
+  FROM pr_reviews
+  GROUP BY repo, pr_number
+)
+SELECT prs.repo,
+       median((julianday(fr.first_review_at) - julianday(prs.created_at)) * 24)
+         AS median_hours_to_first_review
+FROM prs
+JOIN first_review fr ON fr.repo = prs.repo AND fr.pr_number = prs.number
+GROUP BY prs.repo;
+```
+
+## file_hotspots_90d
+
+```sql
+SELECT cf.repo, cf.filename,
+       COUNT(*) AS touch_count,
+       SUM(cf.changes) AS total_changes
+FROM commit_files cf
+JOIN commits c ON c.repo = cf.repo AND c.sha = cf.sha
+WHERE c.committed_at > date('now', '-90 days')
+GROUP BY cf.repo, cf.filename
+ORDER BY touch_count DESC
+LIMIT 25;
+```
+
+## review_comment_volume
+
+```sql
+WITH per_pr AS (
+  SELECT repo, pr_number, COUNT(*) AS comment_count
+  FROM pr_review_comments
+  GROUP BY repo, pr_number
+),
+reviewers AS (
+  SELECT repo,
+         COUNT(*) AS total_comments,
+         COUNT(DISTINCT reviewer) AS distinct_reviewers
+  FROM pr_review_comments
+  GROUP BY repo
+)
+SELECT per_pr.repo,
+       reviewers.total_comments,
+       reviewers.distinct_reviewers,
+       median(per_pr.comment_count) AS median_comments_per_pr
+FROM per_pr
+JOIN reviewers USING (repo)
+GROUP BY per_pr.repo;
 ```
 """
 
@@ -314,6 +454,138 @@ SELECT author, commits,
 FROM totals
 ORDER BY commits DESC
 LIMIT 10;
+```
+"""
+
+
+@mcp.prompt()
+def commit_history_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+Commit activity over 90 days for {repo}:
+
+```sql
+SELECT author, COUNT(*) AS commits
+FROM commits
+WHERE repo={repo_sql} AND committed_at > date('now','-90 days')
+GROUP BY author
+ORDER BY commits DESC
+LIMIT 20;
+```
+"""
+
+
+@mcp.prompt()
+def ci_health_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+CI / workflow_runs health for {repo}:
+
+```sql
+SELECT workflow_name,
+       SUM(CASE WHEN conclusion='success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pass_pct,
+       median(duration_seconds) AS median_duration_s,
+       COUNT(*) AS runs
+FROM workflow_runs
+WHERE repo={repo_sql} AND created_at > date('now','-90 days')
+GROUP BY workflow_name
+ORDER BY runs DESC;
+```
+"""
+
+
+@mcp.prompt()
+def dep_audit_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+Dependency audit for {repo}:
+
+```sql
+SELECT package_manager, license, COUNT(*) AS pkg_count
+FROM dependencies
+WHERE repo={repo_sql}
+GROUP BY package_manager, license
+ORDER BY pkg_count DESC;
+```
+"""
+
+
+@mcp.prompt()
+def star_trajectory_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+Star-growth trajectory for {repo} (last 12 months, weekly buckets):
+
+```sql
+SELECT strftime('%Y-W%W', starred_at) AS week, COUNT(*) AS stars_added
+FROM star_history
+WHERE repo={repo_sql} AND starred_at > date('now','-365 days')
+GROUP BY week
+ORDER BY week;
+```
+"""
+
+
+@mcp.prompt()
+def review_responsiveness_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+Median time-to-first-review for {repo}:
+
+```sql
+WITH first_review AS (
+  SELECT pr_number, MIN(submitted_at) AS first_review_at
+  FROM pr_reviews
+  WHERE repo={repo_sql}
+  GROUP BY pr_number
+)
+SELECT median((julianday(fr.first_review_at) - julianday(prs.created_at)) * 24)
+         AS median_hours_to_first_review,
+       COUNT(*) AS reviewed_prs
+FROM prs
+JOIN first_review fr ON fr.pr_number = prs.number
+WHERE prs.repo={repo_sql};
+```
+"""
+
+
+@mcp.prompt()
+def file_hotspots_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+File hotspots for {repo}:
+
+```sql
+SELECT cf.filename, COUNT(*) AS touch_count, SUM(cf.changes) AS total_changes
+FROM commit_files cf
+JOIN commits c ON c.repo = cf.repo AND c.sha = cf.sha
+WHERE cf.repo={repo_sql} AND c.committed_at > date('now','-90 days')
+GROUP BY cf.filename
+ORDER BY touch_count DESC
+LIMIT 25;
+```
+"""
+
+
+@mcp.prompt()
+def review_comment_volume_query(repo: str) -> str:
+    repo_sql = _sql_literal(repo)
+    return f"""\
+Review-comment intensity for {repo}:
+
+```sql
+WITH per_pr AS (
+  SELECT pr_number, COUNT(*) AS comments
+  FROM pr_review_comments
+  WHERE repo={repo_sql}
+  GROUP BY pr_number
+)
+SELECT COUNT(*) AS prs_with_review_comments,
+       (SELECT COUNT(DISTINCT reviewer)
+          FROM pr_review_comments WHERE repo={repo_sql}) AS distinct_reviewers,
+       median(comments) AS median_comments_per_pr,
+       MAX(comments) AS max_comments_on_one_pr
+FROM per_pr;
 ```
 """
 

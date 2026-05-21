@@ -159,3 +159,88 @@ def test_snapshots_table_has_composite_pk(db_path: Path) -> None:
             VALUES ('a/b', 'prs', '2025-01-01', '2025-06-01', '2026-05-20T00:00:00Z', 200)
         """
         )
+
+
+def test_commits_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(commits)").fetchall()}
+    expected = {"repo", "sha", "author", "author_email", "committed_at", "message"}
+    assert expected.issubset(cols)
+
+
+def test_commit_files_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(commit_files)").fetchall()}
+    expected = {"repo", "sha", "filename", "status", "additions", "deletions", "changes"}
+    assert expected.issubset(cols)
+
+
+def test_pr_reviews_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(pr_reviews)").fetchall()}
+    expected = {"repo", "pr_number", "id", "reviewer", "state", "submitted_at"}
+    assert expected.issubset(cols)
+
+
+def test_pr_review_comments_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_comments)").fetchall()}
+    expected = {
+        "repo",
+        "pr_number",
+        "id",
+        "reviewer",
+        "body",
+        "path",
+        "line",
+        "position",
+        "created_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_dependencies_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dependencies)").fetchall()}
+    expected = {"repo", "package_name", "package_manager", "version", "license"}
+    assert expected.issubset(cols)
+
+
+def test_star_history_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(star_history)").fetchall()}
+    expected = {"repo", "starred_at", "user"}
+    assert expected.issubset(cols)
+
+
+def test_workflow_runs_table_has_expected_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)").fetchall()}
+    expected = {
+        "repo",
+        "id",
+        "workflow_name",
+        "head_branch",
+        "event",
+        "status",
+        "conclusion",
+        "created_at",
+        "run_started_at",
+        "duration_seconds",
+    }
+    assert expected.issubset(cols)
+
+
+def test_repos_table_has_funding_columns(db_path: Path) -> None:
+    conn = connect(db_path)
+    init_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(repos)").fetchall()}
+    assert "funding_json" in cols
+    assert "has_sponsors" in cols

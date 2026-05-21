@@ -1,0 +1,38 @@
+[
+  {
+    "sha": "abc111",
+    "commit": {
+      "author": {
+        "name": "Alice",
+        "email": "alice@example.com",
+        "date": "2026-04-10T10:00:00Z"
+      },
+      "message": "Add feature X"
+    },
+    "author": {"login": "alice"}
+  },
+  {
+    "sha": "abc222",
+    "commit": {
+      "author": {
+        "name": "Bot",
+        "email": "bot@example.com",
+        "date": "2026-04-12T15:00:00Z"
+      },
+      "message": "chore: bump deps"
+    },
+    "author": null
+  },
+  {
+    "sha": "abc333",
+    "commit": {
+      "author": {
+        "name": "Carol",
+        "email": "carol@example.com",
+        "date": "2024-01-01T00:00:00Z"
+      },
+      "message": "Old commit"
+    },
+    "author": {"login": "carol"}
+  }
+]

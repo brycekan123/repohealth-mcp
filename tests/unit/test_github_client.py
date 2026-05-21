@@ -135,3 +135,19 @@ def test_paginate_respects_max_rows(client: GitHubClient) -> None:
     )
     rows = list(client.paginate("/repos/o/r/pulls", max_rows=50))
     assert len(rows) == 50
+
+
+@respx.mock
+def test_get_sends_custom_accept_when_media_type_set() -> None:
+    client = GitHubClient(token=None)
+    route = respx.get("https://api.github.com/x").mock(return_value=httpx.Response(200, json=[]))
+    client.get("/x", media_type="application/vnd.github.star+json")
+    assert route.calls[0].request.headers["accept"] == "application/vnd.github.star+json"
+
+
+@respx.mock
+def test_get_default_accept_when_media_type_unset() -> None:
+    client = GitHubClient(token=None)
+    route = respx.get("https://api.github.com/x").mock(return_value=httpx.Response(200, json=[]))
+    client.get("/x")
+    assert route.calls[0].request.headers["accept"] == "application/vnd.github+json"

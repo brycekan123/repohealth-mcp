@@ -13,6 +13,13 @@ _ENTITY_TABLES = {
     "releases": "releases",
     "commit_activity": "commit_activity",
     "contributors": "contributors",
+    "commits": "commits",
+    "commit_files": "commit_files",
+    "pr_reviews": "pr_reviews",
+    "pr_review_comments": "pr_review_comments",
+    "dependencies": "dependencies",
+    "star_history": "star_history",
+    "workflow_runs": "workflow_runs",
 }
 
 

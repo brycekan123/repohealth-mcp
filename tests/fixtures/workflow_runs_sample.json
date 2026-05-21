@@ -1,0 +1,35 @@
+[
+  {
+    "id": 1001,
+    "name": "ci",
+    "head_branch": "main",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-04-10T10:00:00Z",
+    "run_started_at": "2026-04-10T10:00:05Z",
+    "updated_at": "2026-04-10T10:03:30Z"
+  },
+  {
+    "id": 1002,
+    "name": "ci",
+    "head_branch": "feat/x",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-04-11T08:00:00Z",
+    "run_started_at": "2026-04-11T08:00:02Z",
+    "updated_at": "2026-04-11T08:05:00Z"
+  },
+  {
+    "id": 1003,
+    "name": "lint",
+    "head_branch": "main",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2024-01-01T00:00:00Z",
+    "run_started_at": "2024-01-01T00:00:05Z",
+    "updated_at": "2024-01-01T00:01:00Z"
+  }
+]

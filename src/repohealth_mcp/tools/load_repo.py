@@ -11,15 +11,42 @@ from typing import Any
 from ..database import connect
 from ..loaders.base import LoaderResult, parse_range
 from ..loaders.commit_activity import load_commit_activity
+from ..loaders.commit_files import load_commit_files
+from ..loaders.commits import load_commits
 from ..loaders.contributors import load_contributors
+from ..loaders.dependencies import load_dependencies
 from ..loaders.issues import load_issues
+from ..loaders.pr_review_comments import load_pr_review_comments
+from ..loaders.pr_reviews import load_pr_reviews
 from ..loaders.prs import load_prs
 from ..loaders.releases import load_releases
 from ..loaders.repo_meta import load_repo_meta
+from ..loaders.star_history import load_star_history
+from ..loaders.workflow_runs import load_workflow_runs
 
-VALID_ENTITIES = ("prs", "issues", "releases", "commit_activity", "contributors")
+DEFAULT_ENTITIES = ("prs", "issues", "releases", "commit_activity", "contributors")
+VALID_ENTITIES = (
+    "prs",
+    "issues",
+    "releases",
+    "commit_activity",
+    "contributors",
+    "commits",
+    "commit_files",
+    "pr_reviews",
+    "pr_review_comments",
+    "dependencies",
+    "star_history",
+    "workflow_runs",
+)
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 _MAX_ROWS_CAP = 5000
+_DEPENDENT_ENTITIES = {"commit_files", "pr_reviews", "pr_review_comments"}
+_DEPENDENT_PARENTS = {
+    "commit_files": "commits",
+    "pr_reviews": "prs",
+    "pr_review_comments": "prs",
+}
 
 
 def _validate_repo(repo: str) -> None:
@@ -57,6 +84,12 @@ def _client_rate_meta(client) -> tuple[int | None, int | None]:
         remaining if isinstance(remaining, int) else None,
         reset if isinstance(reset, int) else None,
     )
+
+
+def _entity_phases(entities: list[str]) -> list[list[str]]:
+    independent = [entity for entity in entities if entity not in _DEPENDENT_ENTITIES]
+    dependent = [entity for entity in entities if entity in _DEPENDENT_ENTITIES]
+    return [phase for phase in (independent, dependent) if phase]
 
 
 def _db_path(conn: sqlite3.Connection) -> str:
@@ -104,24 +137,42 @@ def load_repo(
 
     fetched: dict[str, int] = {}
     errors: list[dict[str, str]] = []
+    failed_entities: set[str] = set()
     if entities:
         db_path = _db_path(conn)
-        with ThreadPoolExecutor(max_workers=len(entities)) as executor:
-            futures = {
-                executor.submit(
-                    _run_entity, db_path, client, entity, repo, range_start, range_end, max_rows
-                ): entity
-                for entity in entities
-            }
-            for future in as_completed(futures):
-                entity = futures[future]
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    errors.append({"entity": entity, "error": str(exc)})
-                    continue
-                fetched[entity] = result.row_count
-                api_calls += result.api_calls
+        for phase in _entity_phases(entities):
+            runnable = []
+            for entity in phase:
+                parent = _DEPENDENT_PARENTS.get(entity)
+                if parent in entities and parent in failed_entities:
+                    errors.append(
+                        {
+                            "entity": entity,
+                            "error": f"skipped because parent entity {parent!r} failed",
+                        }
+                    )
+                    failed_entities.add(entity)
+                else:
+                    runnable.append(entity)
+            if not runnable:
+                continue
+            with ThreadPoolExecutor(max_workers=len(runnable)) as executor:
+                futures = {
+                    executor.submit(
+                        _run_entity, db_path, client, entity, repo, range_start, range_end, max_rows
+                    ): entity
+                    for entity in runnable
+                }
+                for future in as_completed(futures):
+                    entity = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        failed_entities.add(entity)
+                        errors.append({"entity": entity, "error": str(exc)})
+                        continue
+                    fetched[entity] = result.row_count
+                    api_calls += result.api_calls
 
     last_remaining, last_reset = _client_rate_meta(client)
     summary = {
@@ -189,5 +240,67 @@ def _dispatch(
             repo=repo,
             range_start=range_start,
             range_end=range_end,
+        )
+    if entity == "commits":
+        return load_commits(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
+        )
+    if entity == "commit_files":
+        return load_commit_files(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
+        )
+    if entity == "pr_reviews":
+        return load_pr_reviews(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
+        )
+    if entity == "pr_review_comments":
+        return load_pr_review_comments(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
+        )
+    if entity == "dependencies":
+        return load_dependencies(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+        )
+    if entity == "star_history":
+        return load_star_history(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
+        )
+    if entity == "workflow_runs":
+        return load_workflow_runs(
+            conn,
+            client,
+            repo=repo,
+            range_start=range_start,
+            range_end=range_end,
+            max_rows=max_rows,
         )
     raise ValueError(f"unhandled entity {entity}")
