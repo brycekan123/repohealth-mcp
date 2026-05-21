@@ -1,0 +1,39 @@
+[
+  {
+    "number": 100,
+    "title": "Real issue",
+    "user": {"login": "carol"},
+    "state": "open",
+    "state_reason": null,
+    "labels": [{"name": "bug"}, {"name": "p1"}],
+    "created_at": "2026-04-01T10:00:00Z",
+    "updated_at": "2026-04-02T10:00:00Z",
+    "closed_at": null,
+    "comments": 3
+  },
+  {
+    "number": 101,
+    "title": "This is actually a PR",
+    "user": {"login": "dave"},
+    "state": "closed",
+    "state_reason": "completed",
+    "labels": [],
+    "created_at": "2026-04-05T10:00:00Z",
+    "updated_at": "2026-04-06T10:00:00Z",
+    "closed_at": "2026-04-06T10:00:00Z",
+    "comments": 1,
+    "pull_request": {"url": "https://example/pulls/101"}
+  },
+  {
+    "number": 102,
+    "title": "Closed not planned",
+    "user": null,
+    "state": "closed",
+    "state_reason": "not_planned",
+    "labels": [{"name": "wontfix"}],
+    "created_at": "2026-03-01T10:00:00Z",
+    "updated_at": "2026-03-10T10:00:00Z",
+    "closed_at": "2026-03-10T10:00:00Z",
+    "comments": 0
+  }
+]

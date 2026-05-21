@@ -1,0 +1,32 @@
+[
+  {
+    "id": 100,
+    "tag_name": "v5.0.0",
+    "name": "Version 5",
+    "author": {"login": "tannerlinsley"},
+    "published_at": "2024-09-01T12:00:00Z",
+    "created_at": "2024-09-01T11:00:00Z",
+    "draft": false,
+    "prerelease": false
+  },
+  {
+    "id": 101,
+    "tag_name": "v5.1.0-beta.1",
+    "name": "5.1 beta",
+    "author": {"login": "jonas"},
+    "published_at": "2024-10-15T08:30:00Z",
+    "created_at": "2024-10-15T08:00:00Z",
+    "draft": false,
+    "prerelease": true
+  },
+  {
+    "id": 102,
+    "tag_name": null,
+    "name": "Draft release",
+    "author": null,
+    "published_at": null,
+    "created_at": "2024-11-01T00:00:00Z",
+    "draft": true,
+    "prerelease": false
+  }
+]

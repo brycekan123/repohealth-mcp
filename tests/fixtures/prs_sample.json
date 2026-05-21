@@ -1,0 +1,41 @@
+[
+  {
+    "number": 1,
+    "title": "Add feature X",
+    "user": {"login": "alice"},
+    "state": "closed",
+    "draft": false,
+    "created_at": "2026-04-01T10:00:00Z",
+    "updated_at": "2026-04-03T15:00:00Z",
+    "closed_at": "2026-04-03T15:00:00Z",
+    "merged_at": "2026-04-03T15:00:00Z",
+    "comments": 5,
+    "base": {"ref": "main"}
+  },
+  {
+    "number": 2,
+    "title": "WIP",
+    "user": {"login": "bob"},
+    "state": "open",
+    "draft": true,
+    "created_at": "2026-04-15T09:00:00Z",
+    "updated_at": "2026-05-01T12:00:00Z",
+    "closed_at": null,
+    "merged_at": null,
+    "comments": 2,
+    "base": {"ref": "develop"}
+  },
+  {
+    "number": 3,
+    "title": "Closed without merge",
+    "user": null,
+    "state": "closed",
+    "draft": false,
+    "created_at": "2026-03-10T08:00:00Z",
+    "updated_at": "2026-03-12T08:00:00Z",
+    "closed_at": "2026-03-12T08:00:00Z",
+    "merged_at": null,
+    "comments": 0,
+    "base": {"ref": "main"}
+  }
+]
