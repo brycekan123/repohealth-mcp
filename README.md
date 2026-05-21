@@ -11,7 +11,7 @@ who are the top contributors to facebook/react this quarter?
 
 Works with any public GitHub repo.
 
-## Install
+## 🛠 Install
 
 Get `uv` if you don't have it:
 
@@ -37,8 +37,6 @@ Verify with `claude mcp list`, then open a new session and ask:
 is tanstack/query still actively maintained?
 ```
 
-> Paste the `claude mcp add` command on a single line — terminal soft-wraps can register a truncated entry. If that happens, run `claude mcp remove repohealth -s user` and retry.
-
 ### Codex CLI
 
 ```bash
@@ -47,7 +45,7 @@ codex mcp add repohealth -- uvx --from git+https://github.com/brycekan123/repohe
 
 Verify with `codex mcp list`.
 
-## How it works
+## ⚡ How it works
 
 The server exposes four MCP surfaces that a client uses in sequence:
 
@@ -58,7 +56,7 @@ The server exposes four MCP surfaces that a client uses in sequence:
 
 Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` to force-refetch.
 
-## Tools
+## 🧰 Tools
 
 | Tool | Purpose |
 |---|---|
@@ -74,7 +72,7 @@ Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` t
 
 **Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`.
 
-## Data model
+## 🗄 Data model
 
 One SQLite file per user, partitioned by a `repo` column so cross-repo SQL is free:
 
@@ -92,7 +90,65 @@ A `median()` aggregate UDF is registered for SQL.
 
 Snapshot location: `~/Library/Application Support/repohealth-mcp/repohealth.sqlite` on macOS (platform-appropriate elsewhere).
 
-## GitHub token
+## 🏗 Architecture
+
+The agentic pipeline from a natural-language question to a cited answer:
+
+```
+                           User question
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────┐
+        │   MCP client  (Claude Code / Codex CLI)       │
+        └───────────────────────────────────────────────┘
+                                │  JSON-RPC over stdio
+                                ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │   repohealth-mcp server  (FastMCP, stdio)                   │
+   │                                                             │
+   │   1.  plan_data_load(question)                              │
+   │         └─► Gemini → { repos, entities, range_spec }        │
+   │                                                             │
+   │   2.  check_coverage(repo, entity, range)                   │
+   │         └─► SELECT from snapshots → hit / miss              │
+   │                                                             │
+   │   3.  load_repo(repo, entities, range)        [on miss]     │
+   │         ├─► repo_meta loader                                │
+   │         └─► ThreadPoolExecutor  (5 workers, parallel)       │
+   │               ├─► prs loader         ─┐                     │
+   │               ├─► issues loader      ─┤                     │
+   │               ├─► releases loader    ─┤── GitHub REST API   │
+   │               ├─► commit_activity    ─┤   (auth, retries,   │
+   │               └─► contributors       ─┘    202 backoff,     │
+   │                          │                 pagination)      │
+   │                          ▼                                  │
+   │                  Local SQLite snapshot                      │
+   │                  (one file, partitioned by repo)            │
+   │                                                             │
+   │   4.  run_sql(query)                                        │
+   │         └─► read-only SELECT / WITH  →  rows                │
+   └─────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+            LLM composes the answer from the SQL rows
+```
+
+**Walk-through — `is tanstack/query still actively maintained?`**
+
+1. `plan_data_load` →
+   ```json
+   { "repos": ["tanstack/query"],
+     "entities": ["prs","issues","releases","commit_activity","contributors"],
+     "range_spec": "6mo" }
+   ```
+2. `check_coverage("tanstack/query", "prs", "2025-11-21", "2026-05-21")` → miss.
+3. `load_repo(...)` opens a fresh `GitHubClient` and one SQLite connection per worker. The five entity loaders run **concurrently**: PRs and issues paginate `sort=created&direction=desc` and break at the range boundary (no wasted pages); the two `/stats/*` endpoints handle `202 still computing` with bounded retries. Loader failures land in `result["errors"]` without aborting the whole load.
+4. `run_sql` opens a read-only connection (URI `mode=ro`), enforces a `SELECT`/`WITH` allowlist + denylist for `INSERT/UPDATE/DELETE/DROP/ATTACH/PRAGMA`, runs the query, and caps the result at 1000 rows.
+5. The LLM turns the rows into prose, citing the signals it used.
+
+**Follow-up questions** on the same `(repo, entity, range)` skip step 3 entirely — `check_coverage` is a hit and `run_sql` answers from local SQLite in milliseconds.
+
+## 🔐 GitHub token
 
 | Mode | Limit |
 |---|---|
@@ -101,25 +157,6 @@ Snapshot location: `~/Library/Application Support/repohealth-mcp/repohealth.sqli
 
 A fine-grained PAT with public-repo read access is enough. Each `load_repo` response includes a `rate_limit_summary`.
 
-## Examples
-
-```text
-Is vercel/next.js still actively maintained?
-I'm picking between react-query, swr, and tanstack-query. Which is best maintained?
-What's the median PR review time for facebook/react in the last 6 months?
-How often does microsoft/vscode release?
-Show me the top 10 contributors to django/django this year.
-```
-
-## Development
-
-```bash
-uv sync --all-extras
-uv run pytest                                 # 122 unit + e2e tests
-GITHUB_TOKEN=$(gh auth token) uv run pytest -m integration   # hits real GitHub
-uv run ruff check src tests
-```
-
-## License
+## 📄 License
 
 MIT
