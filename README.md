@@ -84,6 +84,28 @@ Follow-up questions on the same repo skip GitHub entirely. Call `refresh_repo` t
 
 **Prompts:** `dep_health_query`, `compare_repos_query`, `release_cadence_query`, `responsiveness_query`, `contributor_health_query`, `commit_history_query`, `ci_health_query`, `dep_audit_query`, `star_trajectory_query`, `review_responsiveness_query`, `file_hotspots_query`, `review_comment_volume_query`, `author_activity_query`, `maintainer_overlap_query`, `compare_repos_activity_query`.
 
+### v3 workflows
+
+**Cross-repo checks:** call `load_repos` with a list of repos, then compare them with SQL.
+
+```text
+load_repos(
+  repos=["rails/rails", "django/django", "laravel/laravel"],
+  entities=["prs", "issues", "releases", "commits", "contributors"],
+  range="6mo"
+)
+```
+
+**Author activity:** call `load_author_activity` with a GitHub login. If `repos` is omitted, repohealth discovers recently-touched repos through GitHub commit search, bounded by `max_repos` and the requested date range.
+
+```text
+load_author_activity(
+  login="defunkt",
+  range="3mo",
+  max_repos=10
+)
+```
+
 ## 🗄 Data model
 
 One SQLite file per user, partitioned by a `repo` column so cross-repo SQL is free:
