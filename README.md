@@ -17,21 +17,54 @@ which authors maintain all of kubernetes/kubernetes, helm/helm, and istio/istio?
 
 Works with any public GitHub repo.
 
-## Architecture
+## 🏗 Architecture
 
 The core idea is a stateful analytics layer for MCP clients: fetch GitHub data once, store it in SQLite, and answer follow-up questions with SQL.
 
-```text
-User question
-  -> MCP client (Claude Code / Codex CLI)
-  -> repohealth-mcp over stdio
-  -> plan_data_load(question)              optional NL -> repos/entities/range
-  -> check_coverage(repo, entity, range)   cache hit, miss, or stale
-  -> load_repo / load_repos / load_author_activity when data is missing
-  -> GitHub REST API                       auth, retries, pagination, 202 backoff
-  -> local SQLite database                 partitioned by repo
-  -> run_sql(query)                        read-only SELECT/WITH with pagination
-  -> LLM answer from SQL rows
+```
+                           User question
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────┐
+        │   MCP client  (Claude Code / Codex CLI)       │
+        └───────────────────────────────────────────────┘
+                                │  JSON-RPC over stdio
+                                ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │   repohealth-mcp server  (FastMCP, stdio)                   │
+   │                                                             │
+   │   1.  plan_data_load(question)  [optional]                  │
+   │         └─► { repos, entities, range_spec, author }         │
+   │                                                             │
+   │   2.  check_coverage(repo, entity, range)                   │
+   │         └─► snapshots table → hit / miss / stale            │
+   │                                                             │
+   │   3.  load_repo(repo, entities, range)      [on miss/stale] │
+   │         ├─► repo metadata + funding                         │
+   │         └─► ThreadPoolExecutor  (parallel phases)           │
+   │               ├─► PRs / issues / releases                   │
+   │               ├─► commits / contributors / activity         │
+   │               ├─► dependencies / stars / CI workflows       │
+   │               └─► opt-in dependent loaders                  │
+   │                    (commit files, reviews, review comments) │
+   │                              │                              │
+   │                              ▼                              │
+   │                    GitHub REST API                          │
+   │                    (auth, retries, 202 backoff, pagination) │
+   │                              │                              │
+   │                              ▼                              │
+   │                  Local SQLite database                      │
+   │                  (one file, partitioned by repo)            │
+   │                                                             │
+   │   4.  load_repos / load_author_activity                     │
+   │         └─► multi-repo fan-out or author repo discovery     │
+   │                                                             │
+   │   5.  run_sql(query, row_cap, offset)                       │
+   │         └─► read-only SELECT / WITH → paged rows            │
+   └─────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+            LLM composes the answer from the SQL rows
 ```
 
 For cross-repo checks, call `load_repos` with a list of repos and compare them with SQL. For author activity, call `load_author_activity`; if `repos` is omitted, repohealth discovers recently touched repos through GitHub commit search, bounded by `max_repos` and the requested date range.
@@ -40,7 +73,7 @@ Cached slices are tracked by `(repo, entity, range_start, range_end)` and marked
 
 `pr_reviews`, `pr_review_comments`, and `commit_files` are opt-in because they fan out one API call per cached parent PR or commit. Parent entities are loaded first, and dependent loaders are skipped if their parent load fails.
 
-## Install
+## 🛠 Install
 
 Get `uv` if you do not have it:
 
@@ -74,7 +107,7 @@ codex mcp add repohealth -- uvx --from git+https://github.com/brycekan123/repohe
 
 Verify with `codex mcp list`.
 
-## Tools
+## 🧰 Tools
 
 | Tool | Purpose |
 |---|---|
@@ -96,7 +129,7 @@ Resources:
 
 Prompts cover dependency health, repo comparison, release cadence, responsiveness, contributor health, commit history, CI health, dependency audit, star trajectory, review responsiveness, file hotspots, review-comment volume, author activity, maintainer overlap, and cross-repo activity comparison.
 
-## Data Model
+## 🗄 Data Model
 
 One SQLite file per user, partitioned by a `repo` column so cross-repo SQL can run in one query.
 
@@ -122,7 +155,7 @@ A `median()` aggregate UDF is registered for SQL.
 
 Snapshot location: `~/Library/Application Support/repohealth-mcp/repohealth.sqlite` on macOS, with platform-appropriate paths elsewhere.
 
-## GitHub Token
+## 🔐 GitHub Token
 
 | Mode | Limit |
 |---|---|
