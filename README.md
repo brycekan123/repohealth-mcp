@@ -1,4 +1,4 @@
-# repohealth-mcp
+# 🩺 📊 🔎 repohealth-mcp
 
 A custom Model Context Protocol (MCP) server for GitHub repository analytics. It loads public GitHub signals into a local SQLite database, then lets MCP clients answer repo-health questions by generating read-only SQL over cached data instead of repeatedly fetching the same API slices.
 
