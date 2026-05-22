@@ -165,7 +165,8 @@ def test_full_flow_plan_load_sql(tmp_path: Path) -> None:
         "SELECT median(julianday(merged_at) - julianday(created_at)) AS days "
         "FROM prs WHERE repo='o/r' AND merged_at IS NOT NULL",
     )
-    assert result["rows"][0]["days"] == pytest.approx(3.5, abs=0.01)
+    assert result["columns"] == ["days"]
+    assert result["rows"][0][0] == pytest.approx(3.5, abs=0.01)
 
 
 def _stub_v3_client() -> MagicMock:

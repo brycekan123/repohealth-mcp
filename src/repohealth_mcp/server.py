@@ -51,12 +51,8 @@ def _get_client() -> GitHubClient:
 
 @mcp.tool()
 def plan_data_load(question: str) -> dict[str, Any]:
-    """Plan GitHub repo-health data loading for natural-language questions.
+    """Parse a natural-language repo-health question into repos, entities, and date range.
 
-    Use for questions about whether a GitHub repository is maintained, active, healthy,
-    responsive, stale, abandoned, or comparable to another repo. Examples:
-    "is tanstack/query still actively maintained?", "compare axios and ky",
-    "release cadence for vercel/next.js", "who are the top contributors?".
     Requires GEMINI_API_KEY; if unavailable, call the load tools directly.
     """
     plan = _plan_data_load(question)
@@ -70,12 +66,7 @@ def plan_data_load(question: str) -> dict[str, Any]:
 
 @mcp.tool()
 def check_coverage(repo: str, entity: str, range_start: str, range_end: str) -> dict[str, Any]:
-    """Check whether repohealth already cached a GitHub repo signal.
-
-    Use before loading when answering repo-health questions from cached GitHub signals.
-    Returns cache freshness (`age_seconds`, `stale`) so answers can distinguish current
-    snapshots from stale local data.
-    """
+    """Check if a repo/entity/range is already cached locally and whether it is stale."""
     return check_coverage_tool(
         sqlite_path(),
         repo=repo,
@@ -92,13 +83,10 @@ def load_repo(
     range: str = "6mo",
     max_rows_per_entity: int = 500,
 ) -> dict[str, Any]:
-    """Load GitHub signals for repo-health analysis into local SQLite.
+    """Fetch GitHub signals for one repo into local SQLite for run_sql queries.
 
-    Use this instead of shelling out to `gh api` for questions like
-    "is tanstack/query still actively maintained?". It fetches repo metadata, PRs,
-    issues, releases, commit activity, contributors, and optional v2 signals such as
-    commits, commit_files, pr_reviews, pr_review_comments, dependencies, star_history,
-    workflow_runs, and funding metadata.
+    Entities: repos, prs, issues, releases, commit_activity, contributors, commits,
+    commit_files, pr_reviews, pr_review_comments, dependencies, star_history, workflow_runs.
     """
     _path, conn = _get_db()
     client = _get_client()
@@ -123,12 +111,7 @@ def refresh_repo(
     range: str = "6mo",
     max_rows_per_entity: int = 500,
 ) -> dict[str, Any]:
-    """Force-refresh GitHub repo-health signals for one repo.
-
-    Use when cached data is stale or the user asks for the latest repo activity,
-    maintenance, releases, contributors, CI, dependencies, stars, PR, issue, or commit
-    signals.
-    """
+    """Drop cached rows for a repo/entity slice and re-fetch from GitHub."""
     _path, conn = _get_db()
     client = _get_client()
     try:
@@ -153,11 +136,7 @@ def load_repos(
     max_rows_per_entity: int = 500,
     max_concurrency: int = 4,
 ) -> dict[str, Any]:
-    """Load GitHub signals for multiple repos in parallel.
-
-    Use for cross-repo comparisons or to bulk-load a set of repos a single author
-    touched. Repo inputs may be owner/name, GitHub URLs, or git@github.com clone lines.
-    """
+    """Parallel version of load_repo for cross-repo comparisons. Accepts owner/name, URLs, or git@ clone lines."""
     path, conn = _get_db()
     conn.close()
     return _load_repos(
@@ -182,13 +161,7 @@ def load_author_activity(
     max_concurrency: int = 4,
     max_search_pages: int = 10,
 ) -> dict[str, Any]:
-    """Load a GitHub user's recent activity across one or many repos.
-
-    Use for author-centric questions: commits, PRs, issues, and optionally reviews.
-    If `repos` is omitted, repohealth discovers repos automatically. The default
-    discovery mode uses `/search/commits` for cross-org coverage; `discovery="owned"`
-    uses `/users/{login}/repos`.
-    """
+    """Load a GitHub user's recent activity across repos. Auto-discovers repos via search if omitted."""
     path, conn = _get_db()
     conn.close()
     return _load_author_activity(
@@ -214,11 +187,7 @@ def search_repos(
     sort: str = "updated",
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Search GitHub repositories without loading their signals.
-
-    Use to discover candidate repos before calling `load_repos` or for a short list
-    of active/popular repos by owner, language, topic, or keyword.
-    """
+    """Search GitHub repos by keyword, owner, language, or topic without loading signals."""
     client = _get_client()
     try:
         return _search_repos(
@@ -235,36 +204,30 @@ def search_repos(
 
 
 @mcp.tool()
-def run_sql(query: str) -> dict[str, Any]:
+def run_sql(query: str, row_cap: int = 200, offset: int = 0) -> dict[str, Any]:
     """Query cached repohealth GitHub signals with read-only SQL.
 
-    Use after `load_repo` or `refresh_repo` to answer repo-health questions with
-    evidence from tables such as repos, prs, issues, releases, commits, contributors,
-    dependencies, star_history, workflow_runs, pr_reviews, and commit_files.
+    Tables: repos, prs, issues, releases, commits, contributors, dependencies,
+    star_history, workflow_runs, pr_reviews, pr_review_comments, commit_files.
+    Select only columns you need. Use WHERE/LIMIT to filter before fetching.
+    Returns {columns: [str], rows: [[value, ...]], has_more: bool}; rows are arrays
+    aligned to `columns` by index. If has_more, call again with offset += row_cap.
     """
     try:
-        return _run_sql(sqlite_path(), query)
+        return _run_sql(sqlite_path(), query, row_cap=row_cap, offset=offset)
     except RunSqlError as exc:
         return {"error": str(exc), "query": query}
 
 
 @mcp.tool()
 def get_loaded_tables() -> dict[str, Any]:
-    """Return repohealth SQLite tables, columns, and row counts.
-
-    Use to inspect which GitHub repo-health signals are available locally before
-    writing SQL or answering from cached data.
-    """
+    """Return table names, column lists, and row counts for the local snapshot."""
     return _get_loaded_tables(sqlite_path())
 
 
 @mcp.tool()
 def list_loaded_repos() -> dict[str, Any]:
-    """Return cached repohealth snapshots by repo, entity, range, and freshness.
-
-    Use to see which GitHub repositories and signals are already loaded for
-    maintenance/activity analysis.
-    """
+    """List cached snapshots showing repo, entity, date range, and freshness."""
     return _list_loaded_repos(sqlite_path())
 
 
